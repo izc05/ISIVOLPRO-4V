@@ -4,6 +4,18 @@ Este error **no es de la app** (cámara/cronómetro), es de GitHub: tu rama y la
 
 ## Solución rápida (desde local)
 
+## Solución automática (recomendada en este repo)
+
+Puedes usar el script incluido para reconstruir tu rama encima de `origin/main` y re-aplicar tus commits:
+
+```bash
+git checkout <tu-rama>
+scripts/fix_pr_conflicts.sh main
+git push --force-with-lease origin <tu-rama>
+```
+
+Si durante el `cherry-pick` aparece conflicto, el script se para y te indica cómo continuar.
+
 1. Trae la base más reciente:
 
 ```bash

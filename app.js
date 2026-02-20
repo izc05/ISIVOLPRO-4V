@@ -49,6 +49,18 @@ Mensual (muestras)
 
 Recuerda: dosis y tiempos están prefijados hasta confirmar protocolo exacto del centro.`;
 
+function getTechNameFromUI(){
+  return String($("techName")?.value || "").trim().slice(0, 18);
+}
+function hasTechAccess(showMessage = true){
+  const ok = Boolean(state.tech && state.tech.trim());
+  if (!ok && showMessage) {
+    toast("Primero entra con un técnico para continuar.");
+    show("profile");
+  }
+  return ok;
+}
+
 function todayStr(){
   const d = new Date();
   const y = d.getFullYear();
@@ -293,6 +305,7 @@ function timerTick(){
 }
 
 function startTimerForCurrent(){
+  if (!hasTechAccess()) return;
   const code = state.currentCode;
   if (!code) return;
 
@@ -338,7 +351,13 @@ async function markOTStatus(code, status){
 async function finishTimer(auto=false){
   const t = state.timer;
   t.running = false;
+  t.paused = false;
   stopRaf();
+
+  $("timerLeft").textContent = "00:00";
+  setWaterProgress(1);
+  $("btnPause").classList.remove("hidden");
+  $("btnResume").classList.add("hidden");
 
   try { navigator.vibrate?.([120, 60, 120]); } catch {}
   if (auto) {
@@ -397,8 +416,14 @@ function resumeTimer(){
 }
 
 async function markIssue(){
+  if (!hasTechAccess()) return;
   const code = state.currentCode;
   if (!code) return;
+
+  const t = state.timer;
+  t.running = false;
+  t.paused = false;
+  stopRaf();
 
   const reason = prompt("Incidencia (rápido):
 - No accesible
@@ -436,8 +461,13 @@ Escribe una frase corta:");
 
 // ---------------- QR Scan ----------------
 async function startScan(){
-  if (!("mediaDevices" in navigator)) {
+  if (!hasTechAccess()) return;
+  if (!("mediaDevices" in navigator) || typeof navigator.mediaDevices.getUserMedia !== "function") {
     toast("Este navegador no soporta cámara. Usa 'Añadir punto'.");
+    return;
+  }
+  if (!window.isSecureContext) {
+    toast("Para usar cámara abre la app en HTTPS o localhost.");
     return;
   }
   const video = $("qrVideo");
@@ -497,6 +527,7 @@ function stopScan(){
 
 // ---------------- Historial ----------------
 async function openHistory(){
+  if (!hasTechAccess()) return;
   const tech = state.tech;
   const items = await dbGetHistoryByTech(tech, 300);
   const list = $("historyList");
@@ -523,6 +554,7 @@ async function openHistory(){
 }
 
 async function exportData(){
+  if (!hasTechAccess()) return;
   const dump = await dbExportAll();
   const payload = { app:"IsiVolt Pro V1.3 Legionella", exportedAt:Date.now(), tech:state.tech, data:dump };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
@@ -574,6 +606,7 @@ async function saveMonthlyHeader(){
 }
 
 async function openMonthly(){
+  if (!hasTechAccess()) return;
   const tech = state.tech;
   const month = monthKey();
 
@@ -827,6 +860,7 @@ function fileToDataUrl(file){
   });
 }
 async function exportMonthly(){
+  if (!hasTechAccess()) return;
   const tech = state.tech;
   const month = monthKey();
   const header = await dbGetMonthlyHeader(tech, month);
@@ -934,19 +968,28 @@ function init(){
   updateOnline();
 
   if (!state.tech){
+    $("techName").value = "";
     show("profile");
   } else {
+    $("techName").value = state.tech;
     show("home");
     refreshOT();
   }
 
-  $("btnSetTech").addEventListener("click", async ()=>{
-    const name = String($("techName").value || "").trim();
+  async function doLogin(){
+    const name = getTechNameFromUI();
     if (!name) return toast("Escribe el nombre del técnico.");
     state.tech = name;
     localStorage.setItem("isivolt.tech", name);
     show("home");
     await refreshOT();
+  }
+
+  $("btnSetTech").addEventListener("click", async ()=>{
+    await doLogin();
+  });
+  $("techName").addEventListener("keydown", async (e)=>{
+    if (e.key === "Enter") await doLogin();
   });
 
   $("btnSwitchTech").addEventListener("click", ()=>{
@@ -971,6 +1014,7 @@ function init(){
   });
 
   $("btnScan").addEventListener("click", ()=>{
+    if (!hasTechAccess()) return;
     setScanMode("ot");
     show("scan");
   });
@@ -1030,7 +1074,9 @@ Cuando completas un punto, queda ✅ y se guarda en el historial.");
   $("btnResume").addEventListener("click", resumeTimer);
   $("btnFinish").addEventListener("click", ()=> finishTimer(false));
   $("btnExitTimer").addEventListener("click", ()=>{
+    if (state.timer.running && !confirm("El cronómetro sigue en marcha. ¿Quieres salir igualmente?")) return;
     state.timer.running = false;
+    state.timer.paused = false;
     stopRaf();
     show("home");
   });
@@ -1063,10 +1109,12 @@ Cuando completas un punto, queda ✅ y se guarda en el historial.");
   $("btnMonthlyOpen").addEventListener("click", openMonthlyFile);
 
   $("btnMonthlyScanHot").addEventListener("click", ()=>{
+    if (!hasTechAccess()) return;
     setScanMode("monthlyHot");
     show("scan");
   });
   $("btnMonthlyScanCold").addEventListener("click", ()=>{
+    if (!hasTechAccess()) return;
     setScanMode("monthlyCold");
     show("scan");
   });

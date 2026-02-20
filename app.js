@@ -346,7 +346,10 @@ function updateDoseUI(){
 function stopRaf(){ if (state.timer.raf) cancelAnimationFrame(state.timer.raf); state.timer.raf = 0; }
 function setWaterProgress(pct){
   const p = Math.max(0, Math.min(1, pct));
-  $("waterFill").style.height = `${Math.round(p*100)}%`;
+  const fill = $("waterFill");
+  fill.style.height = `${Math.round(p*100)}%`;
+  const y = -30 + (p * 30);
+  fill.style.transform = `translateY(${y.toFixed(1)}%)`;
 }
 function timerTick(){
   const t = state.timer;
@@ -425,7 +428,7 @@ async function finishTimer(auto=false){
   $("btnResume").classList.add("hidden");
 
   try { navigator.vibrate?.([120, 60, 120]); } catch {}
-  if (auto) playTone("done");
+  playTone("done");
 
   $("sealDone").classList.remove("hidden");
 
@@ -1093,7 +1096,7 @@ function init(){
   $("btnCloseAccess").addEventListener("click", closeAccessModal);
   $("btnSaveAccess").addEventListener("click", saveAccessFromUI);
 
-  $("btnSwitchTech").addEventListener("click", ()=>{
+  $("btnOpenTimer").addEventListener("click", ()=>{
     if (!state.timer.running) return toast("No hay cronómetro activo.");
     show("timer");
   });
@@ -1178,6 +1181,13 @@ Cuando completas un punto, queda ✅ y se guarda en el historial.`);
     if (state.timer.running && !confirm("El cronómetro seguirá en marcha. ¿Salir para revisar otras pantallas?")) return;
     show("home");
     updateTimerDock();
+  });
+
+  $("btnMinimizeTimer").addEventListener("click", ()=>{
+    if (!state.timer.running) return toast("No hay cronómetro activo.");
+    show("home");
+    updateTimerDock();
+    toast("Cronómetro minimizado. Sigue corriendo en segundo plano.");
   });
 
   $("btnTimerDock").addEventListener("click", ()=>{

@@ -31,6 +31,8 @@ const state = {
   timer: { running:false, paused:false, startTs:0, durationMs:0, elapsedMs:0, raf:0 }
 };
 
+const ACCESS_KEY = "isivolt.access";
+const DEFAULT_ACCESS = { user: "tecnico", pass: "1234" };
 const SETTINGS_KEY = "isivolt.settings";
 const DEFAULT_SETTINGS = { bleachPct: 5, targetPpm: 50, baseMin: 10, factorPerL: 0.00 };
 const GUIDE_KEY = "isivolt.guideText";
@@ -51,6 +53,21 @@ Recuerda: dosis y tiempos están prefijados hasta confirmar protocolo exacto del
 
 function getTechNameFromUI(){
   return String($("techName")?.value || "").trim().slice(0, 18);
+}
+function getTechPasswordFromUI(){
+  return String($("techPassword")?.value || "").trim().slice(0, 32);
+}
+function getAccess(){
+  const raw = localStorage.getItem(ACCESS_KEY);
+  if (!raw) return { ...DEFAULT_ACCESS };
+  try {
+    return { ...DEFAULT_ACCESS, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_ACCESS };
+  }
+}
+function saveAccess(access){
+  localStorage.setItem(ACCESS_KEY, JSON.stringify(access));
 }
 function hasTechAccess(showMessage = true){
   const ok = Boolean(state.tech && state.tech.trim());
@@ -926,6 +943,31 @@ function saveSettingsFromUI(){
 }
 function resetSettings(){ saveSettings({ ...DEFAULT_SETTINGS }); openSettings(); }
 
+function openAccessModal(){
+  const access = getAccess();
+  $("accessUser").value = access.user;
+  $("accessPass").value = access.pass;
+  $("modalAccess").classList.remove("hidden");
+}
+function closeAccessModal(){
+  $("modalAccess").classList.add("hidden");
+}
+function saveAccessFromUI(){
+  const user = String($("accessUser").value || "").trim().slice(0,18);
+  const pass = String($("accessPass").value || "").trim().slice(0,32);
+  if (!user) return toast("El usuario no puede estar vacío.");
+  if (pass.length < 4) return toast("La contraseña debe tener al menos 4 caracteres.");
+
+  saveAccess({ user, pass });
+  state.tech = user;
+  localStorage.setItem("isivolt.tech", user);
+  $("techName").value = user;
+  $("techPassword").value = "";
+  closeAccessModal();
+  refreshOT();
+  toast("Acceso actualizado ✅");
+}
+
 // ---------------- Navigation & Events ----------------
 function bindNav(){
   document.querySelectorAll("[data-nav]").forEach(btn=>{
@@ -968,7 +1010,9 @@ function init(){
   updateOnline();
 
   if (!state.tech){
-    $("techName").value = "";
+    const access = getAccess();
+    $("techName").value = access.user;
+    $("techPassword").value = "";
     show("profile");
   } else {
     $("techName").value = state.tech;
@@ -977,10 +1021,17 @@ function init(){
   }
 
   async function doLogin(){
-    const name = getTechNameFromUI();
-    if (!name) return toast("Escribe el nombre del técnico.");
-    state.tech = name;
-    localStorage.setItem("isivolt.tech", name);
+    const user = getTechNameFromUI();
+    const pass = getTechPasswordFromUI();
+    const access = getAccess();
+
+    if (!user || !pass) return toast("Introduce usuario y contraseña.");
+    if (user !== access.user || pass !== access.pass) return toast("Acceso denegado. Revisa credenciales.");
+
+    state.tech = access.user;
+    localStorage.setItem("isivolt.tech", access.user);
+    $("techName").value = access.user;
+    $("techPassword").value = "";
     show("home");
     await refreshOT();
   }
@@ -991,11 +1042,20 @@ function init(){
   $("techName").addEventListener("keydown", async (e)=>{
     if (e.key === "Enter") await doLogin();
   });
+  $("techPassword").addEventListener("keydown", async (e)=>{
+    if (e.key === "Enter") await doLogin();
+  });
+
+  $("btnEditAccess").addEventListener("click", openAccessModal);
+  $("btnCloseAccess").addEventListener("click", closeAccessModal);
+  $("btnSaveAccess").addEventListener("click", saveAccessFromUI);
 
   $("btnSwitchTech").addEventListener("click", ()=>{
     localStorage.removeItem("isivolt.tech");
     state.tech = "";
-    $("techName").value = "";
+    const access = getAccess();
+    $("techName").value = access.user;
+    $("techPassword").value = "";
     show("profile");
   });
 
@@ -1003,7 +1063,9 @@ function init(){
     if (!confirm("¿Cerrar sesión en este móvil?")) return;
     localStorage.removeItem("isivolt.tech");
     state.tech = "";
-    $("techName").value = "";
+    const access = getAccess();
+    $("techName").value = access.user;
+    $("techPassword").value = "";
     show("profile");
   });
 

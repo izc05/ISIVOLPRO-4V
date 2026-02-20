@@ -31,6 +31,10 @@ const state = {
 };
 
 const SETTINGS_KEY = "isivolt.settings";
+const LOGIN_USERS = {
+  tecnico: "1234",
+  admin: "admin123",
+};
 const DEFAULT_SETTINGS = {
   bleachPct: 5,      // %
   targetPpm: 50,     // ppm (mg/L) provisional
@@ -526,9 +530,17 @@ function init(){
 
   $("btnSetTech").addEventListener("click", async ()=>{
     const name = String($("techName").value || "").trim();
+    const pass = String($("techPass").value || "").trim();
     if (!name) return alert("Escribe el nombre del técnico.");
+
+    const validPass = LOGIN_USERS[name.toLowerCase()];
+    if (!validPass || pass !== validPass){
+      return alert("Credenciales inválidas. Usa las temporales de acceso.");
+    }
+
     state.tech = name;
     localStorage.setItem("isivolt.tech", name);
+    $("techPass").value = "";
     show("home");
     await refreshOT();
   });
@@ -537,6 +549,7 @@ function init(){
     localStorage.removeItem("isivolt.tech");
     state.tech = "";
     $("techName").value = "";
+    $("techPass").value = "";
     show("profile");
   });
 

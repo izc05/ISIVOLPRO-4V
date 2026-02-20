@@ -22,6 +22,7 @@ const screens = {
 
 const state = {
   tech: localStorage.getItem("isivolt.tech") || "",
+  role: localStorage.getItem("isivolt.role") || "",
   currentCode: "",
   currentOTKey: "",
   stream: null,
@@ -34,7 +35,10 @@ const state = {
 const SETTINGS_KEY = "isivolt.settings";
 const DEFAULT_SETTINGS = { bleachPct: 5, targetPpm: 50, baseMin: 10, factorPerL: 0.00 };
 const GUIDE_KEY = "isivolt.guideText";
+const USERS_KEY = "isivolt.users";
 const DEFAULT_GUEST_TECH = "Tecnico";
+const DEFAULT_COORD_NAME = "Coordinador";
+const DEFAULT_ACCESS_PASS = "1234";
 
 const DEFAULT_GUIDE = `Bienvenido a IsiVolt Pro V1 Legionella.
 
@@ -54,6 +58,12 @@ Recuerda: dosis y tiempos están prefijados hasta confirmar protocolo exacto del
 function getTechNameFromUI(){
   return String($("techName")?.value || "").trim().slice(0, 18);
 }
+function getPassFromUI(){
+  return String($("techPass")?.value || "").trim().slice(0, 24);
+}
+function getRoleFromUI(){
+  return String($("roleSelect")?.value || "tecnico").trim();
+}
 function hasTechAccess(showMessage = true){
   const ok = Boolean(state.tech && state.tech.trim());
   if (!ok && showMessage) {
@@ -61,6 +71,41 @@ function hasTechAccess(showMessage = true){
     show("profile");
   }
   return ok;
+}
+
+function roleLabel(role){
+  return role === "coordinador" ? "Coordinador" : "Técnico";
+}
+function getStoredUsers(){
+  const defaults = {
+    tecnico: { name: DEFAULT_GUEST_TECH, pass: DEFAULT_ACCESS_PASS },
+    coordinador: { name: DEFAULT_COORD_NAME, pass: DEFAULT_ACCESS_PASS }
+  };
+  const raw = localStorage.getItem(USERS_KEY);
+  if (!raw) return defaults;
+  try {
+    const parsed = JSON.parse(raw) || {};
+    return {
+      tecnico: {
+        name: String(parsed.tecnico?.name || defaults.tecnico.name).trim().slice(0, 18),
+        pass: String(parsed.tecnico?.pass || defaults.tecnico.pass).trim().slice(0, 24)
+      },
+      coordinador: {
+        name: String(parsed.coordinador?.name || defaults.coordinador.name).trim().slice(0, 18),
+        pass: String(parsed.coordinador?.pass || defaults.coordinador.pass).trim().slice(0, 24)
+      }
+    };
+  } catch {
+    return defaults;
+  }
+}
+function saveStoredUsers(users){
+  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+}
+function updateRoleUI(){
+  if ($("kpiRole")) {
+    $("kpiRole").textContent = `Rol: ${roleLabel(state.role || "tecnico")}`;
+  }
 }
 
 function todayStr(){
@@ -971,26 +1016,48 @@ function init(){
 
   if (!state.tech){
     $("techName").value = "";
+    $("techPass").value = "";
+    $("roleSelect").value = "tecnico";
     show("profile");
   } else {
     $("techName").value = state.tech;
+    $("techPass").value = "";
+    $("roleSelect").value = state.role || "tecnico";
     show("home");
+    updateRoleUI();
     refreshOT();
   }
 
-  async function loginWithTech(name){
+  async function loginWithTech(name, role){
     const safeName = String(name || "").trim().slice(0, 18);
-    if (!safeName) return toast("Escribe el nombre del técnico.");
+    const safeRole = role === "coordinador" ? "coordinador" : "tecnico";
+    if (!safeName) return toast("Escribe el nombre de acceso.");
     state.tech = safeName;
+    state.role = safeRole;
     localStorage.setItem("isivolt.tech", safeName);
+    localStorage.setItem("isivolt.role", safeRole);
     $("techName").value = safeName;
+    $("roleSelect").value = safeRole;
+    $("techPass").value = "";
     show("home");
+    updateRoleUI();
     await refreshOT();
   }
 
   async function doLogin(){
     const name = getTechNameFromUI();
-    await loginWithTech(name);
+    const pass = getPassFromUI();
+    const role = getRoleFromUI();
+    const users = getStoredUsers();
+    const account = users[role];
+    if (!account) return toast("Rol inválido.");
+    const expectedName = String(account.name || "").trim();
+    const expectedPass = String(account.pass || "").trim();
+    if (!name || !pass) return toast("Escribe usuario y contraseña.");
+    if (name !== expectedName || pass !== expectedPass) {
+      return toast("Usuario o contraseña incorrectos.");
+    }
+    await loginWithTech(name, role);
   }
 
   $("btnSetTech").addEventListener("click", async ()=>{
@@ -999,23 +1066,54 @@ function init(){
   $("techName").addEventListener("keydown", async (e)=>{
     if (e.key === "Enter") await doLogin();
   });
+  $("techPass").addEventListener("keydown", async (e)=>{
+    if (e.key === "Enter") await doLogin();
+  });
   $("btnGuestAccess").addEventListener("click", async ()=>{
-    await loginWithTech(DEFAULT_GUEST_TECH);
-    toast(`Acceso rápido activo: ${DEFAULT_GUEST_TECH}`);
+    const users = getStoredUsers();
+    await loginWithTech(users.tecnico.name || DEFAULT_GUEST_TECH, "tecnico");
+    toast(`Acceso técnico activo: ${users.tecnico.name || DEFAULT_GUEST_TECH}`);
+  });
+  $("btnCoordAccess").addEventListener("click", async ()=>{
+    const users = getStoredUsers();
+    await loginWithTech(users.coordinador.name || DEFAULT_COORD_NAME, "coordinador");
+    toast(`Acceso coordinador activo: ${users.coordinador.name || DEFAULT_COORD_NAME}`);
+  });
+
+  $("btnChangePass").addEventListener("click", ()=>{
+    if (!hasTechAccess()) return;
+    const users = getStoredUsers();
+    const role = state.role === "coordinador" ? "coordinador" : "tecnico";
+    const account = users[role];
+    const next = prompt(`Nueva contraseña para ${roleLabel(role)} (${account.name}):`, "");
+    if (next == null) return;
+    const safePass = String(next).trim().slice(0, 24);
+    if (!safePass) return toast("La contraseña no puede estar vacía.");
+    users[role] = { ...account, pass: safePass };
+    saveStoredUsers(users);
+    toast(`Contraseña actualizada para ${roleLabel(role)}.`);
   });
 
   $("btnSwitchTech").addEventListener("click", ()=>{
     localStorage.removeItem("isivolt.tech");
+    localStorage.removeItem("isivolt.role");
     state.tech = "";
+    state.role = "";
     $("techName").value = "";
+    $("techPass").value = "";
+    $("roleSelect").value = "tecnico";
     show("profile");
   });
 
   $("btnLogout").addEventListener("click", ()=>{
     if (!confirm("¿Cerrar sesión en este móvil?")) return;
     localStorage.removeItem("isivolt.tech");
+    localStorage.removeItem("isivolt.role");
     state.tech = "";
+    state.role = "";
     $("techName").value = "";
+    $("techPass").value = "";
+    $("roleSelect").value = "tecnico";
     show("profile");
   });
 

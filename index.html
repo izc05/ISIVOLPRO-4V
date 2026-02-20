@@ -36,11 +36,19 @@
         <p class="muted">V1.3 guarda datos en este móvil (modo bloc de notas). Puedes cambiar de técnico cuando quieras.</p>
         <div class="row">
           <input id="techName" class="input" placeholder="Nombre técnico (ej: Paco)" maxlength="18" />
+          <input id="techPass" type="password" class="input" placeholder="Contraseña" maxlength="24" />
+        </div>
+        <div class="row">
+          <select id="roleSelect" class="input" title="Rol de acceso">
+            <option value="tecnico">Técnico</option>
+            <option value="coordinador">Coordinador</option>
+          </select>
           <button id="btnSetTech" class="btn">Entrar</button>
-          <button id="btnGuestAccess" class="btn btn-ghost" title="Acceso rápido">Entrar rápido</button>
+          <button id="btnGuestAccess" class="btn btn-ghost" title="Acceso rápido técnico">Entrar técnico</button>
+          <button id="btnCoordAccess" class="btn btn-ghost" title="Acceso rápido coordinador">Entrar coordinador</button>
         </div>
         <div class="divider"></div>
-        <p class="muted tiny">Consejo: usa el mismo nombre siempre en el mismo móvil para mantener historial limpio.</p>
+        <p class="muted tiny">Acceso inicial: <b>Técnico / 1234</b> y <b>Coordinador / 1234</b>. Luego puedes cambiar la contraseña dentro de la app.</p>
       </div>
     </section>
 
@@ -52,8 +60,10 @@
             <div>
               <div class="muted">Técnico</div>
               <div id="kpiTech" class="kpi-value">—</div>
+              <div id="kpiRole" class="muted tiny">Rol: —</div>
             </div>
             <div class="row">
+              <button id="btnChangePass" class="btn btn-ghost" title="Cambiar contraseña">🔐 Clave</button>
               <button id="btnSwitchTech" class="btn btn-ghost">Cambiar</button>
               <button id="btnLogout" class="btn btn-danger" title="Cerrar sesión">Cerrar</button>
             </div>

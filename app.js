@@ -24,11 +24,12 @@ const state = {
   tech: localStorage.getItem("isivolt.tech") || "",
   currentCode: "",
   currentOTKey: "",
+  activeTimerCode: "",
   stream: null,
   detector: null,
   scanMode: "ot", // "ot" | "monthlyHot" | "monthlyCold"
   showEmptyMonthly: false,
-  timer: { running:false, paused:false, startTs:0, durationMs:0, elapsedMs:0, raf:0 }
+  timers: {}
 };
 
 let timerDockInterval = 0;
@@ -174,19 +175,6 @@ function playTone(type = "tap"){
   } catch {}
 }
 
-function updateTimerDock(){
-  const btn = $("btnTimerDock");
-  if (!btn) return;
-  const t = state.timer;
-  if (!t.running) {
-    btn.classList.add("hidden");
-    return;
-  }
-  const left = Math.max(0, t.durationMs - t.elapsedMs);
-  btn.textContent = `⏱ ${fmtTime(left)}`;
-  btn.classList.remove("hidden");
-}
-
 // ---------------- OT ----------------
 async function refreshOT(){
   const tech = state.tech;
@@ -206,8 +194,9 @@ async function refreshOT(){
   for (const it of items.sort((a,b)=> (a.order||0)-(b.order||0))){
     const el = document.createElement("div");
     el.className = "item";
-    const badgeClass = it.status === "ok" ? "ok" : it.status === "issue" ? "issue" : "todo";
-    const badgeText = it.status === "ok" ? "✅ Hecho" : it.status === "issue" ? "⚠ Incid." : "⏳ Pend.";
+    const timerRunning = Boolean(getTimer(it.code)?.running);
+    const badgeClass = it.status === "ok" ? "ok" : it.status === "issue" ? "issue" : timerRunning ? "ok" : "todo";
+    const badgeText = it.status === "ok" ? "✅ Hecho" : it.status === "issue" ? "⚠ Incid." : timerRunning ? "⏱ En curso" : "⏳ Pend.";
     const note = it.note ? ` · ${it.note}` : "";
     el.innerHTML = `
       <div class="left">
@@ -220,8 +209,8 @@ async function refreshOT(){
         <button class="btn btn-ghost" data-edit="${it.code}" title="Editar código">✏️</button>
       </div>
     `;
-    el.querySelector("[data-open]").addEventListener("click", () => openPoint(it.code));
-    el.querySelector("[data-edit]").addEventListener("click", () => editOTCode(it.code));
+    el.querySelector("[data-open]")?.addEventListener("click", () => openPoint(it.code));
+    el.querySelector("[data-edit]")?.addEventListener("click", () => editOTCode(it.code));
     list.appendChild(el);
   }
 }
@@ -331,6 +320,9 @@ async function openPoint(code){
   $("chkDose").checked = false;
   $("chkStart").checked = false;
 
+  const existingTimer = getTimer(state.currentCode);
+  $("btnStartTimer").textContent = existingTimer?.running ? "⏱ Ver cronómetro" : "⏱ Iniciar proceso";
+
   updateDoseUI();
   show("point");
 }
@@ -343,7 +335,6 @@ function updateDoseUI(){
 }
 
 // ---------------- Timer (water fill) ----------------
-function stopRaf(){ if (state.timer.raf) cancelAnimationFrame(state.timer.raf); state.timer.raf = 0; }
 function setWaterProgress(pct){
   const p = Math.max(0, Math.min(1, pct));
   const fill = $("waterFill");
@@ -351,23 +342,61 @@ function setWaterProgress(pct){
   const y = -30 + (p * 30);
   fill.style.transform = `translateY(${y.toFixed(1)}%)`;
 }
-function timerTick(){
-  const t = state.timer;
-  if (!t.running || t.paused) return;
+function getTimer(code){
+  const c = normalizeCode(code);
+  if (!c) return null;
+  return state.timers[c] || null;
+}
+function getRunningTimers(){
+  return Object.values(state.timers).filter(t => t.running);
+}
+function updateTimerDock(){
+  const btn = $("btnTimerDock");
+  if (!btn) return;
 
-  const now = performance.now();
-  t.elapsedMs = now - t.startTs;
-  const left = Math.max(0, t.durationMs - t.elapsedMs);
-
-  $("timerLeft").textContent = fmtTime(left);
-  setWaterProgress(t.elapsedMs / t.durationMs);
-  updateTimerDock();
-
-  if (left <= 0){
-    finishTimer(true);
+  const running = getRunningTimers();
+  if (!running.length){
+    btn.classList.add("hidden");
     return;
   }
-  t.raf = requestAnimationFrame(timerTick);
+
+  const latest = running.sort((a,b)=> (b.updatedAt||0) - (a.updatedAt||0))[0];
+  const left = Math.max(0, latest.durationMs - latest.elapsedMs);
+  btn.textContent = `⏱ ${latest.code} ${fmtTime(left)}${running.length > 1 ? ` · +${running.length-1}` : ""}`;
+  btn.classList.remove("hidden");
+}
+function renderTimerScreen(){
+  const t = getTimer(state.activeTimerCode);
+  if (!t){
+    $("timerCode").textContent = "—";
+    $("timerLeft").textContent = "00:00";
+    $("timerTarget").textContent = "Objetivo: —";
+    setWaterProgress(0);
+    return;
+  }
+
+  const left = Math.max(0, t.durationMs - t.elapsedMs);
+  $("timerCode").textContent = t.code;
+  $("timerLeft").textContent = fmtTime(left);
+  $("timerTarget").textContent = `Objetivo: ${t.minutes} min`;
+  setWaterProgress(t.durationMs ? t.elapsedMs / t.durationMs : 0);
+  $("btnPause").classList.toggle("hidden", t.paused || !t.running);
+  $("btnResume").classList.toggle("hidden", !t.paused || !t.running);
+}
+
+async function tickTimers(){
+  const now = performance.now();
+  for (const t of getRunningTimers()){
+    if (t.paused || t.finishing) continue;
+    t.elapsedMs = now - t.startTs;
+    t.updatedAt = Date.now();
+    if (t.elapsedMs >= t.durationMs){
+      t.elapsedMs = t.durationMs;
+      await finishTimerForCode(t.code, true);
+    }
+  }
+  renderTimerScreen();
+  updateTimerDock();
 }
 
 function startTimerForCurrent(){
@@ -375,34 +404,42 @@ function startTimerForCurrent(){
   const code = state.currentCode;
   if (!code) return;
 
+  const existing = getTimer(code);
+  if (existing?.running){
+    state.activeTimerCode = code;
+    renderTimerScreen();
+    show("timer");
+    return;
+  }
+
   const mins = Number($("targetMinutes").value);
   if (!isFinite(mins) || mins <= 0) return toast("Tiempo objetivo inválido.");
 
-  $("timerCode").textContent = code;
-  $("timerTarget").textContent = `Objetivo: ${mins} min`;
+  const timer = {
+    code,
+    running: true,
+    paused: false,
+    finishing: false,
+    durationMs: mins * 60 * 1000,
+    elapsedMs: 0,
+    startTs: performance.now(),
+    updatedAt: Date.now(),
+    liters: Number($("liters").value) || 60,
+    minutes: mins,
+    note: String($("pointNote").value || "").trim().slice(0,120)
+  };
+  state.timers[code] = timer;
+  state.activeTimerCode = code;
 
   $("sealDone").classList.add("hidden");
   $("sealWarn").classList.add("hidden");
-  $("btnPause").classList.remove("hidden");
-  $("btnResume").classList.add("hidden");
-
-  const t = state.timer;
-  t.running = true; t.paused = false;
-  t.durationMs = mins * 60 * 1000;
-  t.elapsedMs = 0;
-  t.startTs = performance.now();
-
-  $("timerLeft").textContent = fmtTime(t.durationMs);
-  setWaterProgress(0);
-
   show("timer");
   playTone("tap");
-  stopRaf();
-  t.raf = requestAnimationFrame(timerTick);
+  renderTimerScreen();
   updateTimerDock();
 }
 
-async function markOTStatus(code, status){
+async function markOTStatus(code, status, litersOverride=null){
   const tech = state.tech;
   const date = todayStr();
   const items = await dbGetOTByTechDate(tech, date);
@@ -411,69 +448,76 @@ async function markOTStatus(code, status){
 
   it.status = status;
   it.updatedAt = Date.now();
-  it.defaultLiters = Number($("liters").value) || it.defaultLiters || 60;
+  it.defaultLiters = Number(litersOverride) || Number($("liters").value) || it.defaultLiters || 60;
   await dbPutOT(it);
   await refreshOT();
 }
 
-async function finishTimer(auto=false){
-  const t = state.timer;
+async function finishTimerForCode(code, auto=false){
+  const t = getTimer(code);
+  if (!t || !t.running || t.finishing) return;
+  t.finishing = true;
   t.running = false;
   t.paused = false;
-  stopRaf();
-
-  $("timerLeft").textContent = "00:00";
-  setWaterProgress(1);
-  $("btnPause").classList.remove("hidden");
-  $("btnResume").classList.add("hidden");
+  t.updatedAt = Date.now();
 
   try { navigator.vibrate?.([120, 60, 120]); } catch {}
   playTone("done");
 
-  $("sealDone").classList.remove("hidden");
+  if (state.activeTimerCode === code){
+    $("sealDone").classList.remove("hidden");
+    renderTimerScreen();
+  }
 
-  const liters = Number($("liters").value) || null;
   const settings = getSettings();
+  const liters = Number(t.liters) || null;
   const dose = liters ? Math.round(calcDoseMl(liters, settings) ?? 0) : null;
-  const mins = Number($("targetMinutes").value) || null;
-  const note = String($("pointNote").value || "").trim().slice(0,120);
 
   await dbAddHistory({
     tech: state.tech,
     date: todayStr(),
-    code: state.currentCode,
+    code,
     ts: Date.now(),
     liters,
     doseMl: dose,
-    minutes: mins,
+    minutes: t.minutes,
     result: "ok",
-    note: note || undefined
+    note: t.note || undefined
   });
 
-  if (note) await saveOTNote(state.currentCode, note);
-  await markOTStatus(state.currentCode, "ok");
+  if (t.note) await saveOTNote(code, t.note);
+  await markOTStatus(code, "ok", liters);
+  delete state.timers[code];
+  if (state.activeTimerCode === code) state.activeTimerCode = "";
   updateTimerDock();
 }
 
+async function finishTimer(auto=false){
+  const code = state.activeTimerCode || state.currentCode;
+  if (!code) return;
+  await finishTimerForCode(code, auto);
+}
+
 function pauseTimer(){
-  const t = state.timer;
-  if (!t.running || t.paused) return;
+  const t = getTimer(state.activeTimerCode || state.currentCode);
+  if (!t || !t.running || t.paused) return;
   t.paused = true;
-  stopRaf();
+  t.updatedAt = Date.now();
   $("btnPause").classList.add("hidden");
   $("btnResume").classList.remove("hidden");
   playTone("pause");
   updateTimerDock();
 }
 function resumeTimer(){
-  const t = state.timer;
-  if (!t.running || !t.paused) return;
+  const t = getTimer(state.activeTimerCode || state.currentCode);
+  if (!t || !t.running || !t.paused) return;
   t.paused = false;
   t.startTs = performance.now() - t.elapsedMs;
+  t.updatedAt = Date.now();
   $("btnPause").classList.remove("hidden");
   $("btnResume").classList.add("hidden");
-  t.raf = requestAnimationFrame(timerTick);
   playTone("tap");
+  updateTimerDock();
 }
 
 async function markIssue(){
@@ -481,10 +525,13 @@ async function markIssue(){
   const code = state.currentCode;
   if (!code) return;
 
-  const t = state.timer;
-  t.running = false;
-  t.paused = false;
-  stopRaf();
+  const t = getTimer(code);
+  if (t){
+    t.running = false;
+    t.paused = false;
+    t.updatedAt = Date.now();
+    delete state.timers[code];
+  }
 
   const reason = prompt(`Incidencia (rápido):
 - No accesible
@@ -739,7 +786,7 @@ async function openMonthly(){
     const empty = acc.querySelector('[data-empty="1"]');
     empty.style.display = (arr.length===0) ? "block" : "none";
 
-    acc.querySelector('[data-naall="1"]').addEventListener("click", async (e)=>{
+    acc.querySelector('[data-naall="1"]')?.addEventListener("click", async (e)=>{
       e.stopPropagation();
       if (arr.length===0) return toast("No hay puntos en esta planta.");
       const ok = confirm(`¿Marcar TODA la Planta ${plant} como NO APLICA?`);
@@ -778,14 +825,14 @@ async function openMonthly(){
           <button class="smallbtn na" data-na="1">🚫</button>
         </div>
       `;
-      el.querySelector('[data-ok="1"]').addEventListener("click", async ()=>{
+      el.querySelector('[data-ok="1"]')?.addEventListener("click", async ()=>{
         it.status = "ok";
         it.updatedAt = Date.now();
         it.note = "";
         await dbPutMonthly(it);
         await openMonthly();
       });
-      el.querySelector('[data-issue="1"]').addEventListener("click", async ()=>{
+      el.querySelector('[data-issue="1"]')?.addEventListener("click", async ()=>{
         const r = prompt("Incidencia (rápido):", it.note || "");
         if (r == null) return;
         it.status = "issue";
@@ -794,7 +841,7 @@ async function openMonthly(){
         await dbPutMonthly(it);
         await openMonthly();
       });
-      el.querySelector('[data-na="1"]').addEventListener("click", async ()=>{
+      el.querySelector('[data-na="1"]')?.addEventListener("click", async ()=>{
         const r = prompt(`No aplica (motivo):
 - Exterior (otra empresa)
 - Parking sin tomas
@@ -1082,26 +1129,23 @@ function init(){
     await refreshOT();
   }
 
-  $("btnSetTech").addEventListener("click", async ()=>{
+  $("btnSetTech")?.addEventListener("click", async ()=>{
     await doLogin();
   });
-  $("techName").addEventListener("keydown", async (e)=>{
+  $("techName")?.addEventListener("keydown", async (e)=>{
     if (e.key === "Enter") await doLogin();
   });
-  $("techPassword").addEventListener("keydown", async (e)=>{
+  $("techPassword")?.addEventListener("keydown", async (e)=>{
     if (e.key === "Enter") await doLogin();
   });
 
-  $("btnEditAccess").addEventListener("click", openAccessModal);
-  $("btnCloseAccess").addEventListener("click", closeAccessModal);
-  $("btnSaveAccess").addEventListener("click", saveAccessFromUI);
+  $("btnEditAccess")?.addEventListener("click", openAccessModal);
+  $("btnCloseAccess")?.addEventListener("click", closeAccessModal);
+  $("btnSaveAccess")?.addEventListener("click", saveAccessFromUI);
 
-  $("btnOpenTimer").addEventListener("click", ()=>{
-    if (!state.timer.running) return toast("No hay cronómetro activo.");
-    show("timer");
-  });
 
-  $("btnLogout").addEventListener("click", ()=>{
+
+  $("btnLogout")?.addEventListener("click", ()=>{
     if (!confirm("¿Cerrar sesión en este móvil?")) return;
     localStorage.removeItem("isivolt.tech");
     state.tech = "";
@@ -1111,37 +1155,37 @@ function init(){
     show("profile");
   });
 
-  $("btnAddCode").addEventListener("click", async ()=>{
+  $("btnAddCode")?.addEventListener("click", async ()=>{
     const code = prompt("Introduce el código (se usarán los 5 últimos):");
     if (code == null) return;
     await addOTCode(code);
   });
 
-  $("btnScan").addEventListener("click", ()=>{
+  $("btnScan")?.addEventListener("click", ()=>{
     if (!hasTechAccess()) return;
     setScanMode("ot");
     show("scan");
   });
 
-  $("btnHistory").addEventListener("click", ()=> openHistory());
-  $("btnMonthly").addEventListener("click", ()=> openMonthly());
+  $("btnHistory")?.addEventListener("click", ()=> openHistory());
+  $("btnMonthly")?.addEventListener("click", ()=> openMonthly());
 
-  $("btnExplainOT").addEventListener("click", ()=>{
+  $("btnExplainOT")?.addEventListener("click", ()=>{
     alert(`OT de hoy = la lista de puntos que vas a hacer hoy.
 
 Se crea añadiendo puntos (QR o código).
 Cuando completas un punto, queda ✅ y se guarda en el historial.`);
   });
 
-  $("btnClearOT").addEventListener("click", async ()=>{
+  $("btnClearOT")?.addEventListener("click", async ()=>{
     if (!confirm("¿Vaciar OT de hoy? (solo en este móvil)")) return;
     await dbDeleteOTByTechDate(state.tech, todayStr());
     await refreshOT();
   });
 
-  $("btnStartScan").addEventListener("click", startScan);
-  $("btnStopScan").addEventListener("click", stopScan);
-  $("btnManualGo").addEventListener("click", async ()=>{
+  $("btnStartScan")?.addEventListener("click", startScan);
+  $("btnStopScan")?.addEventListener("click", stopScan);
+  $("btnManualGo")?.addEventListener("click", async ()=>{
     const c = normalizeCode($("manualCodeFromScan").value);
     if (!c) return toast("Código inválido.");
     stopScan();
@@ -1157,101 +1201,97 @@ Cuando completas un punto, queda ✅ y se guarda en el historial.`);
     }
   });
 
-  $("liters").addEventListener("input", ()=> updateDoseUI());
-  $("btnUseDefaultLiters").addEventListener("click", ()=>{
+  $("liters")?.addEventListener("input", ()=> updateDoseUI());
+  $("btnUseDefaultLiters")?.addEventListener("click", ()=>{
     $("liters").value = 60;
     updateDoseUI();
     $("targetMinutes").value = calcAutoMinutes($("liters").value, getSettings());
   });
-  $("btnTimeAuto").addEventListener("click", ()=>{
+  $("btnTimeAuto")?.addEventListener("click", ()=>{
     $("targetMinutes").value = calcAutoMinutes($("liters").value, getSettings());
   });
-  $("btnSaveNote").addEventListener("click", async ()=>{
+  $("btnSaveNote")?.addEventListener("click", async ()=>{
     await saveOTNote(state.currentCode, $("pointNote").value);
     toast("Nota guardada ✅");
   });
-  $("btnStartTimer").addEventListener("click", ()=> startTimerForCurrent());
-  $("btnMarkIssue").addEventListener("click", markIssue);
-  $("btnEditCode").addEventListener("click", ()=> editOTCode(state.currentCode));
+  $("btnStartTimer")?.addEventListener("click", ()=> startTimerForCurrent());
+  $("btnMarkIssue")?.addEventListener("click", markIssue);
+  $("btnEditCode")?.addEventListener("click", ()=> editOTCode(state.currentCode));
 
-  $("btnPause").addEventListener("click", pauseTimer);
-  $("btnResume").addEventListener("click", resumeTimer);
-  $("btnFinish").addEventListener("click", ()=> finishTimer(false));
-  $("btnExitTimer").addEventListener("click", ()=>{
-    if (state.timer.running && !confirm("El cronómetro seguirá en marcha. ¿Salir para revisar otras pantallas?")) return;
+  $("btnPause")?.addEventListener("click", pauseTimer);
+  $("btnResume")?.addEventListener("click", resumeTimer);
+  $("btnFinish")?.addEventListener("click", ()=> finishTimer(false));
+  $("btnExitTimer")?.addEventListener("click", ()=>{
+    if (getRunningTimers().length && !confirm("Los cronómetros seguirán en marcha. ¿Salir para revisar otras pantallas?")) return;
     show("home");
     updateTimerDock();
   });
 
-  $("btnMinimizeTimer").addEventListener("click", ()=>{
-    if (!state.timer.running) return toast("No hay cronómetro activo.");
-    show("home");
-    updateTimerDock();
-    toast("Cronómetro minimizado. Sigue corriendo en segundo plano.");
-  });
-
-  $("btnTimerDock").addEventListener("click", ()=>{
-    if (!state.timer.running) return;
+  $("btnTimerDock")?.addEventListener("click", ()=>{
+    const running = getRunningTimers();
+    if (!running.length) return;
+    state.activeTimerCode = running.sort((a,b)=> (b.updatedAt||0) - (a.updatedAt||0))[0].code;
+    renderTimerScreen();
     show("timer");
   });
 
-  $("btnExport").addEventListener("click", exportData);
-  $("btnImport").addEventListener("click", ()=> $("fileImport").click());
-  $("fileImport").addEventListener("change", async (e)=>{
+  $("btnExport")?.addEventListener("click", exportData);
+  $("btnImport")?.addEventListener("click", ()=> $("fileImport").click());
+  $("fileImport")?.addEventListener("change", async (e)=>{
     const file = e.target.files?.[0];
     if (!file) return;
     await importData(file);
     e.target.value = "";
   });
 
-  $("btnMonthlyAdd").addEventListener("click", async ()=>{
+  $("btnMonthlyAdd")?.addEventListener("click", async ()=>{
     await addMonthlyManual();
     await openMonthly();
   });
-  $("btnMonthlyClear").addEventListener("click", async ()=>{
+  $("btnMonthlyClear")?.addEventListener("click", async ()=>{
     if (!confirm("¿Vaciar checklist mensual del mes actual?")) return;
     await dbDeleteMonthlyByTechMonth(state.tech, monthKey());
     await openMonthly();
   });
-  $("btnMonthlyAttach").addEventListener("click", ()=> $("monthlyFile").click());
-  $("monthlyFile").addEventListener("change", async (e)=>{
+  $("btnMonthlyAttach")?.addEventListener("click", ()=> $("monthlyFile").click());
+  $("monthlyFile")?.addEventListener("change", async (e)=>{
     const file = e.target.files?.[0];
     if (!file) return;
     await attachMonthlyFile(file);
     e.target.value = "";
   });
-  $("btnMonthlyOpen").addEventListener("click", openMonthlyFile);
+  $("btnMonthlyOpen")?.addEventListener("click", openMonthlyFile);
 
-  $("btnMonthlyScanHot").addEventListener("click", ()=>{
+  $("btnMonthlyScanHot")?.addEventListener("click", ()=>{
     if (!hasTechAccess()) return;
     setScanMode("monthlyHot");
     show("scan");
   });
-  $("btnMonthlyScanCold").addEventListener("click", ()=>{
+  $("btnMonthlyScanCold")?.addEventListener("click", ()=>{
     if (!hasTechAccess()) return;
     setScanMode("monthlyCold");
     show("scan");
   });
-  $("btnMonthlyShowEmpty").addEventListener("click", async ()=>{
+  $("btnMonthlyShowEmpty")?.addEventListener("click", async ()=>{
     state.showEmptyMonthly = !state.showEmptyMonthly;
     $("btnMonthlyShowEmpty").textContent = `👁️ Mostrar vacías: ${state.showEmptyMonthly ? "ON" : "OFF"}`;
     await openMonthly();
   });
-  $("btnSaveMonthlyHeader").addEventListener("click", saveMonthlyHeader);
-  $("btnMonthlyExport").addEventListener("click", exportMonthly);
+  $("btnSaveMonthlyHeader")?.addEventListener("click", saveMonthlyHeader);
+  $("btnMonthlyExport")?.addEventListener("click", exportMonthly);
 
-  $("btnSettings").addEventListener("click", openSettings);
-  $("btnCloseSettings").addEventListener("click", closeSettings);
-  $("btnSaveSettings").addEventListener("click", saveSettingsFromUI);
-  $("btnResetSettings").addEventListener("click", resetSettings);
+  $("btnSettings")?.addEventListener("click", openSettings);
+  $("btnCloseSettings")?.addEventListener("click", closeSettings);
+  $("btnSaveSettings")?.addEventListener("click", saveSettingsFromUI);
+  $("btnResetSettings")?.addEventListener("click", resetSettings);
 
-  $("btnGuide").addEventListener("click", openGuide);
-  $("btnSpeak").addEventListener("click", speakGuide);
-  $("btnStopSpeak").addEventListener("click", stopSpeak);
+  $("btnGuide")?.addEventListener("click", openGuide);
+  $("btnSpeak")?.addEventListener("click", speakGuide);
+  $("btnStopSpeak")?.addEventListener("click", stopSpeak);
 
   clearInterval(timerDockInterval);
-  timerDockInterval = setInterval(updateTimerDock, 500);
-  updateTimerDock();
+  timerDockInterval = setInterval(() => { tickTimers(); }, 250);
+  tickTimers();
 }
 
 init();

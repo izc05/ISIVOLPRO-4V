@@ -1,0 +1,64 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Control de Personal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .shift-card {
+            margin-bottom: 20px;
+            box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+        }
+        .guardia-mobile {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .solicitudes-table {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">Panel de Control de Personal</h1>
+        <div class="mb-4">
+            <h3>Fontanería</h3>
+            <div class="guardia-mobile">
+                <h5>📱 Guardia móvil (automática por hora)</h5>
+                <div id="guardia-mobile-content"></div>
+            </div>
+            <div class="row" id="technicians"></div>
+        </div>
+        <div class="solicitudes-table">
+            <h4>Registro de solicitudes de cambio de turno</h4>
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>Fecha</th>
+                        <th>Sale</th>
+                        <th>Cubre</th>
+                        <th>Solicita</th>
+                        <th>Aprueba</th>
+                        <th>Notas</th>
+                    </tr>
+                </thead>
+                <tbody id="solicitudes-body">
+                    <tr>
+                        <td colspan="6" class="text-center">Sin solicitudes registradas.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
